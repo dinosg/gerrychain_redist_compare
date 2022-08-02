@@ -1,0 +1,485 @@
+---
+title: "Pennsylvania Redistricting Analysis"
+output:
+  html_document:
+    df_print: paged
+---
+
+# Pennsylvania Redistricting Analysis
+
+### Author: Paul Dingus
+
+This is an analysis of the possible district plans that might be drawn in Pennsylvania in 2022. The primary goal of this project is to determine the effect of differing assumptions and restrictions on the redistricting process and the range of "fair" maps that may result. Thus, the goal is primarily to run a sensitivity analysis on the redistricting simluation process.
+
+[redist](https://cran.r-project.org/web/packages/redist/index.html) is an R package containing a suite of tools for redistricting analysis, and will be used for this project. 
+- [Introduction to redist](https://cran.r-project.org/web/packages/redist/vignettes/redist.html)
+- [redist documentation](https://cran.r-project.org/web/packages/redist/redist.pdf)
+- [redist source code](https://github.com/alarm-redist/redist)
+
+The data used for this project is from the US Census and PA Secretary of State elections data, compiled by Dinos Gonatas.
+
+```{r}
+library(sf)
+library(redist)
+library(dplyr)
+library(ggplot2)
+library(scales)
+library(gridExtra)
+library(dplyr)
+```
+
+## Preparing the map
+
+To prepare the map, we load in data that contains the geometry of the precincts as well as pertinent election and demographic data, and initialize it for redistricting using the redis_map function.
+
+```{r}
+map_subdirectory='./'  #location of map data here
+pa_data =  st_read(paste(map_subdirectory,"shapefiles_w_electiondata/lrc2021_electdat.shp"))
+
+#create sum indexes for 2016-2020 elections
+pa_data <- pa_data %>% rowwise() %>% mutate(sum_d16votes = sum(c_across(starts_with("D_")), na.rm = T), 
+sum_r16votes = sum(c_across(starts_with("R_")), na.rm = T)) 
+
+#rename 2012-2014 election contests
+pa_data <- pa_data %>% rename(D_2012_ag = ATG12D, R_2012_ag = ATG12R, 
+D_2012_sen = USS12D, R_2012_sen = USS12R, D_2012_pre = PRES12D, 
+R_2012_pre = PRES12R, D_2014_gov = F2014GOVD, R_2014_gov = F2014GOVR)
+
+#create sum index for all elections (2012-20)
+pa_data <- pa_data %>% rowwise() %>% mutate(sum_dvotes = sum(c_across(starts_with("D_")), na.rm = T), 
+sum_rvotes = sum(c_across(starts_with("R_")), na.rm = T)) 
+
+#Edit shapefile fields to do Barber vote sum index
+pa_data <- pa_data %>% rowwise() %>% mutate(sum_dvotes = sum(c_across(starts_with("D_")), na.rm = T), 
+sum_rvotes = sum(c_across(starts_with("R_")), na.rm = T)) 
+
+
+
+#pa_2020hse <- read.csv("~/Google Drive/My Drive/redist_analysis/shapefiles_w_electiondata/PA_2020_house1.txt")
+names(pa_2020hse)[2] <- "pa2020"
+pa_data$FIPSn = as.numeric(pa_data$FIPS)  #convert FIPS from string to number
+#PA_cdcompact <- read.csv("~/Documents/MATLAB/test_work/redistricting/redist_data/example_districts/PA_CD/PA_compact.txt", header=TRUE)
+#PA_cdcompact <- PA_cdcompact %>% rename(CD_District = District)
+#PA_compact <- read.csv("~/Documents/PA_compact.txt", header=TRUE)
+#PA_competitive  <- read.csv("~/Documents/MATLAB/test_work/redistricting/redist_data/example_districts/PA_CD/PA_competitive.txt", header=TRUE)
+#PA_benning <- read.csv("~/Documents/MATLAB/test_work/redistricting/redist_data/example_districts/PA_HD/benninghoff_amendment.txt", header=TRUE)
+#PA_benning <- PA_benning %>% rename (benning = District)
+PA_cdfinal <- read.csv("~/Documents/MATLAB/test_work/redistricting/redist_data/example_districts/PA_CD/CARTER_PA_assignments_nosplitpcts.txt", header=TRUE)
+PA_cdfinal <- PA_cdfinal %>% rename(CD_District = District)
+
+#PA_competitive <- read.csv("~/Documents/PA_competitive.txt", header=TRUE)
+#pa_data <- merge(x=pa_data, y=PA_competitive,by="GEOID20",all=TRUE)
+#pa_data <- merge(x=pa_data, y=PA_cdcompact,by="GEOID20",all=TRUE)
+#pa_data <- pa_data %>% rename(cdcompact = District)
+#pa_data <- pa_data %>% rename(cdcompetitive = District)
+#pa_data <- merge(x=pa_data, y=pa_2020hse,by="GEOID20",all=TRUE)
+pa_data <- merge(x=pa_data, y=PA_cdfinal,by="GEOID20",all=TRUE)
+```
+#pa_data <- merge(x=pa_data, y=PA_cdcompact,by="GEOID20",all=TRUE)
+#pa_data <- merge(x=pa_data, y=PA_benning,by="GEOID20",all=TRUE)
+
+```{r}
+#create a redist_map object with the appropriate number of districts and population tolerance
+#pa_map = redist_map(pa_data, total_pop = P0010001, pop_tol = 0.05, existing_plan = HDlrc)
+#pa_map = redist_map(pa_data, total_pop = P0010001, pop_tol = 0.05, ndists = 17)
+#pa_map = redist_map(pa_data, total_pop = TOTPOP, pop_tol = 0.02, existing_plan = cdcompact)
+#pa_map = redist_map(pa_data, total_pop = P0010001, pop_tol = 0.05, existing_plan = HDlrc)
+pa_map = redist_map(pa_data, total_pop = TOTPOP, pop_tol = 0.01, existing_plan = CD_District)
+
+#pa_map = redist_map(pa_data, total_pop = P0010001, pop_tol = 0.05, existing_plan = pa2020)
+#pa_map = redist_map(pa_data, total_pop = TOTPOP, pop_tol = 0.05, existing_plan = benning)
+#pa_map = redist_map(pa_data, total_pop = TOTPOP, pop_tol = 0.01, existing_plan = hb2146)
+#eliminate unpopulated precincts
+pa_map = filter(pa_map, TOTPOP > 0)
+
+
+
+
+#Use the mergesplit method to simulate districts:
+#NO Constraints for pa_plans_0
+#unconstrained ensemble here for reference:
+pa_plans_0 = redist_mergesplit(pa_map, nsims = 50000, warmup=1000,
+                      compactness = 1
+                      )
+"""
+pa_plans_1 = redist_mergesplit_parallel(pa_map, nsims = 1000, chains=8, cl_type='FORK',
+                      compactness = 1, 
+                      counties = pa_map$FIPS, 
+                      constraints = list(
+                        splits = list(strength = 0.5),
+                        multisplits = list(strength =  0.3)
+                        )
+                      )
+
+pa_plans_2 = redist_mergesplit_parallel(pa_map, nsims = 1000, chains=8,
+                      compactness = 1, 
+                      init_plan = pa_map$HDlrc,
+                      counties = pa_map$FIPSn, 
+                      constraints = list(
+                        splits = list(strength = 3)
+                        )
+                      )
+
+pa_plans_3 = redist_mergesplit(pa_map, nsims = 1000, 
+                      compactness = 1, 
+                      init_plan = pa_map$HDlrc,
+                      counties = pa_map$FIPS, 
+                      constraints = list(
+                        splits = list(strength = 0.3),
+                         multisplits = list(strength = 0.4)
+                        )
+                      )
+"""
+#
+#build a library of constraint functions here. For Congressional Districts the SMC model and total splits
+#constraints work best
+
+constr = redist_constr(pa_map)
+constr = add_constr_custom(constr,  3, # the constraint strength
+    function(plan, distr) {
+        check_ctys = unique(pa_map$FIPS[plan == distr]) # which counties this district touches
+        is_split = sapply(check_ctys, function(cty) n_distinct(plan[pa_map$FIPS == cty]) > 1)
+        sum(is_split) # penalty = # of counties split by this district
+    })
+constr = add_constr_multisplits(constr, strength=1.5, admin=FIPS)
+
+constr1 = redist_constr(pa_map)
+constr1 = add_constr_custom(constr1,  2, # the constraint strength
+    function(plan, distr) {
+        check_munis = unique(pa_map$MUNIUNIQUE[plan == distr]) # which munis this district touches
+        is_split_m = sapply(check_munis, function(muni) n_distinct(plan[pa_map$MUNIUNIQUE == muni]) > 1)
+        sum(is_split_m) # penalty =  # munis split by this district
+    })
+constr1 = add_constr_custom(constr1,  3., # the constraint strength
+    function(plan, distr) {
+        check_ctys = unique(pa_map$FIPS[plan == distr]) # which counties this district touches
+        is_split = sapply(check_ctys, function(cty) n_distinct(plan[pa_map$FIPS == cty]) > 1)
+        sum(is_split) # penalty = # of counties split by this district
+    })
+
+constr1 = add_constr_multisplits(constr1, strength=1, admin=MUNIUNIQUE)
+constr1 = add_constr_multisplits(constr1, strength=1, admin=FIPS)
+
+constr2 = redist_constr(pa_map)
+constr2 = add_constr_total_splits(constr2,1.5,admin=pa_map$FIPS )
+constr2 = add_constr_total_splits(constr2,1.5,admin=pa_map$MUNIUNIQUE )
+
+constr2 = add_constr_multisplits(constr2,.5,admin=pa_map$MUNIUNIQUE )
+constr2 = add_constr_multisplits(constr2,.5,admin=pa_map$FIPS )
+
+
+
+#constr2 = add_constr_splits(constr2,3,admin=pa_map$FIPS )
+#constr2 = add_constr_multisplits(constr2, strength=1.5, admin=FIPS)
+#constr3
+constr3 = redist_constr(pa_map)
+constr3 = add_constr_splits(constr3,3,admin=pa_map$FIPSn )
+
+constr3 = add_constr_multisplits(constr3,1.5,admin=pa_map$FIPSn )
+
+#constr4
+constr4 = redist_constr(pa_map)
+constr4 = add_constr_splits(constr4,3,admin=pa_map$FIPS )
+
+constr4 = add_constr_multisplits(constr4,1.5,admin=pa_map$FIPS )
+constr4 = add_constr_splits(constr4,3,admin=pa_map$MUNIUNIQUE )
+
+constr4 = add_constr_multisplits(constr4,1.5,admin=pa_map$MUNIUNIQUE )
+#constr5
+constr5 = redist_constr(pa_map)
+constr5 = add_constr_splits(constr5,3,admin=pa_map$FIPSn )
+
+constr5 = add_constr_multisplits(constr5,1.5,admin=pa_map$FIPSn )
+
+"""
+
+t1 = Sys.time()
+pa_plans_31 = redist_mergesplit(pa_map, nsims = 50000, warmup=1000,
+                      compactness = 1, 
+                      init_plan = pa_map$CD_District,
+                      constraints = constr1
+                      
+)
+Sys.time() - t1
+"""
+#do Redist SMC HERE:
+t1 = Sys.time()
+pa_plans_32 = redist_smc(pa_map, nsims = 5000,
+                      compactness = 1, 
+                      counties = pa_map$FIPS, 
+                      constraints = constr2
+                      )
+Sys.time() - t1
+
+""" 
+pa_plans_33 = redist_mergesplit(pa_map, nsims = 5000, warmup=1000,
+                      compactness = 1, 
+                      init_plan = pa_map$CD_District,
+                      constraints = constr
+                      
+)
+pa_plans_34 = redist_mergesplit(pa_map, nsims = 50000, warmup=1000,
+                      compactness = 1, 
+                      init_plan = pa_map$hb2146,
+                      constraints = constr4
+                      
+)
+pa_plans_4 = redist_mergesplit(pa_map, nsims = 1000, 
+                      compactness = 1, 
+                      counties = pa_map$FIPS, 
+                      constraints = list(
+                        multisplits = list(strength = 0.4)
+                        )
+                      )
+
+"""
+
+
+```
+
+Now that we've created some simulations, we need to calculate the vote share within the districts.
+
+```{r}
+#check on how many county splits
+#ac <- splits_count(pa_map$cdcompetitive, pa_map, admin=FIPS)
+ab <- splits_count(pa_plans_32, pa_map, admin=FIPS)
+mean(colSums(ab)) -67   #gives county splitcount - note need to subtract # of existing counties
+#add diagnostic columns containing percentage of votes for different parties in different elections
+
+#perform the 2016-20 average of elections HERE:
+plans = list(pa_plans_0, pa_plans_1, pa_plans_2, pa_plans_3, pa_plans_4)
+plans = list(pa_plans_32)
+pa_stats = list()
+pa_summaries = list()
+
+for(i in 1:1) {
+  stats = plans[[i]] %>%
+      mutate(pop_dev = abs(total_pop / get_target(pa_map) - 1),
+             pct_16_pre = group_frac(pa_map, D_2016_pre, R_2016_pre + D_2016_pre),
+             pct_16_ag = group_frac(pa_map, D_2016_ag, R_2016_ag + D_2016_ag),
+             pct_16_sen = group_frac(pa_map, D_2016_sen, R_2016_sen + D_2016_sen),
+             pct_18_gov = group_frac(pa_map, D_2018_gov, R_2018_gov + D_2018_gov),
+             pct_18_sen = group_frac(pa_map, D_2018_sen, R_2018_sen + D_2018_sen),
+             pct_20_pre = group_frac(pa_map, D_2020_pre, R_2020_pre + D_2020_pre),
+             pct_20_ag = group_frac(pa_map, D_2020_ag, R_2020_ag + D_2020_ag)
+             )
+  
+  summary = stats %>%
+    group_by(draw) %>%
+    summarise(
+      max_dev = max(pop_dev),
+      dists_16_pre = sum(pct_16_pre>0.5),
+      dists_16_ag = sum(pct_16_ag>0.5),
+      dists_16_sen = sum(pct_16_sen>0.5),
+      dists_18_gov = sum(pct_18_gov>0.5),
+      dists_18_sen =  sum(pct_18_sen>0.5),
+      dists_20_pre = sum(pct_20_pre>0.5),
+      dists_20_ag = sum(pct_20_ag>0.5),
+      av_dists = mean(c(dists_16_pre, dists_16_ag, dists_16_sen, dists_18_gov, dists_18_sen, dists_20_pre, dists_20_ag))
+         )
+  
+  pa_stats = append(pa_stats, list(stats))
+  pa_summaries = append(pa_summaries, list(summary))
+}
+
+
+for(summary in pa_summaries) {
+  print(mean(summary$av_dists))
+}
+
+#perform the 2012-2020 average of elections HERE:
+#plans = list(pa_plans_0, pa_plans_1, pa_plans_2, pa_plans_3, pa_plans_4)
+#plans = list(pa_plans_31)
+plans = list(pa_plans_32)
+#plans = list(pa_plans_33)
+pa_stats = list()
+pa_summaries = list()
+for(i in 1:1) {
+  stats = plans[[i]] %>%
+      mutate(pop_dev = abs(total_pop / get_target(pa_map) - 1),
+             pct_12_ag = group_frac(pa_map, D_2012_ag, D_2012_ag + R_2012_ag),
+             pct_12_sen = group_frac(pa_map, D_2012_sen, D_2012_sen + R_2012_sen),
+             pct_12_pre = group_frac(pa_map, D_2012_pre, D_2012_pre + R_2012_pre),
+             pct_14_gov = group_frac(pa_map, D_2014_gov, D_2014_gov + R_2014_gov),
+             pct_16_pre = group_frac(pa_map, D_2016_pre, R_2016_pre + D_2016_pre),
+             pct_16_ag = group_frac(pa_map, D_2016_ag, R_2016_ag + D_2016_ag),
+             pct_16_sen = group_frac(pa_map, D_2016_sen, R_2016_sen + D_2016_sen),
+             pct_18_gov = group_frac(pa_map, D_2018_gov, R_2018_gov + D_2018_gov),
+             pct_18_sen = group_frac(pa_map, D_2018_sen, R_2018_sen + D_2018_sen),
+             pct_20_pre = group_frac(pa_map, D_2020_pre, R_2020_pre + D_2020_pre),
+             pct_20_ag = group_frac(pa_map, D_2020_ag, R_2020_ag + D_2020_ag)
+             )
+  
+  summary = stats %>%
+    group_by(draw) %>%
+    summarise(
+      max_dev = max(pop_dev),
+      dists_12_ag = sum(pct_12_ag> 0.5),
+      dists_12_sen = sum(pct_12_sen > 0.5),
+      dists_12_pre = sum(pct_12_pre > 0.5),
+      dists_14_gov = sum(pct_14_gov > 0.5),
+      dists_16_pre = sum(pct_16_pre>0.5),
+      dists_16_ag = sum(pct_16_ag>0.5),
+      dists_16_sen = sum(pct_16_sen>0.5),
+      dists_18_gov = sum(pct_18_gov>0.5),
+      dists_18_sen =  sum(pct_18_sen>0.5),
+      dists_20_pre = sum(pct_20_pre>0.5),
+      dists_20_ag = sum(pct_20_ag>0.5),
+      av_dists = mean(c(dists_12_ag, dists_12_sen, dists_14_gov,
+                        dists_16_pre, dists_16_ag, dists_16_sen, dists_18_gov, dists_18_sen, dists_20_pre, dists_20_ag)),
+      av_dists16 = mean(c(dists_16_pre, dists_16_ag, dists_16_sen, dists_18_gov, dists_18_sen, dists_20_pre, dists_20_ag))
+         )
+  
+  pa_stats = append(pa_stats, list(stats))
+  pa_summaries = append(pa_summaries, list(summary))
+}
+
+for(summary in pa_summaries) {
+  print(mean(summary$av_dists))
+}
+
+```
+
+Now we want to aggregate our districts within district plans to understand the number of total districts that would have been won by Democrats given the votes we've seen in previous elections.
+
+Now let's break it down. What results do we get out of this analysis?
+
+
+```{r}
+#histogram of dem districts across plans
+#may need to change scale (below) so histogram fits within range
+p0 = redist.plot.hist(pa_summaries[[1]][2:nrow(pa_summaries[[1]]),], av_dists, bins = 20) + 
+  xlim(8,9.5) +
+  scale_y_continuous(breaks= pretty_breaks()) + theme(legend.position = "none") + 
+  ggtitle("CD- Dem seats won") +
+  geom_vline(xintercept = mean(pa_summaries[[1]]$av_dists), colour = "blue")
+
+grid.arrange(p0, nrow = 1)
+```
+
+```{r}
+#county multisplits
+for(plan in plans) {
+  print(mean(redist.multisplits(plan, pa_map$FIPS)))
+}
+
+#muni multisplits
+for(plan in plans) {
+  print(mean(redist.multisplits(plan, pa_map$MCD_NAME)))
+}
+```
+
+
+```{r}
+#plot the auto-correlation of the segregation of democratic votes
+
+segs = list()
+
+for(plan in plans) {
+  seg = redist.segcalc(plans = get_plans_matrix(plan), 
+                      group_pop = pa_map$D_2020_ag,
+                      total_pop = pa_map$TOTPOP)
+  
+  segs = append(segs, list(seg))
+}
+#create an autocorrelation plot on av_dists from summary
+acf_demseats <- acf(summary$av_dists, lag.max = 1000)
+the_acf = acf_demseats$acf
+plot(the_acf, type='l',main='ACF avg dem state house seats', ylab='autocorrelation', xlab='iteration')
+
+
+```
+
+
+```{r}
+
+```
+
+
+
+```{r}
+distr_compactness(pa_map, measure = "PolsbyPopper", plans = plans[[1]])
+```
+##  GET THE METRICS HERE
+m_12_ag = redist.metrics(plans[[1]], measure='all',rvote= pa_map$R_2012_ag, dvote=pa_map$D_2012_ag)
+m_12_ag <- m_12_ag[1,]
+m_12_sen = redist.metrics(plans[[1]], measure='all',rvote= pa_map$R_2012_sen, dvote=pa_map$D_2012_sen)
+m_12_sen <- m_12_sen[1,]
+m_12_pre = redist.metrics(plans[[1]], measure='all',rvote= pa_map$R_2012_pre, dvote=pa_map$D_2012_pre)
+m_12_pre <- m_12_pre [1,]
+m_14_gov = redist.metrics(plans[[1]], measure='all',rvote= pa_map$R_2014_gov, dvote=pa_map$D_2014_gov)
+m_14_gov <- m_14_gov[1,]
+m_16_pre = redist.metrics(plans[[1]], measure='all',rvote= pa_map$R_2016_pre, dvote=pa_map$D_2016_pre)
+m_16_pre <- m_16_pre[1,]
+m_16_ag = redist.metrics(plans[[1]], measure='all',rvote= pa_map$R_2016_ag, dvote=pa_map$D_2016_ag)
+m_16_ag <- m_16_ag[1,]
+m_16_sen = redist.metrics(plans[[1]], measure='all',rvote= pa_map$R_2016_sen, dvote=pa_map$D_2016_sen)
+m_16_sen <- m_16_sen[1,]
+m_18_gov <- redist.metrics(plans[[1]], measure='all',rvote= pa_map$R_2018_gov, dvote=pa_map$D_2018_gov)
+m_18_gov <- m_18_gov [1,]
+m_18_sen = redist.metrics(plans[[1]], measure='all',rvote= pa_map$R_2018_sen, dvote=pa_map$D_2018_sen)
+m_18_sen <- m_18_sen[1,] 
+m_20_pre = redist.metrics(plans[[1]], measure='all',rvote= pa_map$R_2020_pre, dvote=pa_map$D_2020_pre)
+m_20_pre <- m_20_pre[1,]
+m_20_ag = redist.metrics(plans[[1]], measure='all',rvote= pa_map$R_2020_ag, dvote=pa_map$D_2020_ag)
+m_20_ag <- m_20_ag[1,]
+
+mindex <- redist.metrics(plans[[1]], measure='all',rvote= pa_map$sum_rvotes, dvote=pa_map$sum_dvotes)
+mindex <- mindex[1,]
+
+mindex16 <- redist.metrics(plans[[1]], measure='all',rvote= pa_map$sum_r16votes, dvote=pa_map$sum_d16votes)
+mindex16 <- mindex16[1,]
+
+
+
+allmetrics <- rbind(m_12_ag, m_12_sen, m_12_pre, m_14_gov,m_16_pre,m_16_ag,m_16_sen,m_18_gov,m_18_sen,m_20_pre,m_20_ag)
+cat('EG 2012-20', mean((allmetrics$EffGap)))
+cat('MM 2012-20', mean((allmetrics$MeanMedian)))
+allmetrics16 <- rbind(m_16_pre,m_16_ag,m_16_sen,m_18_gov,m_18_sen,m_20_pre,m_20_ag)
+cat('EG 2016-20', mean((allmetrics16$EffGap)))
+cat('MM 2016-20',mean((allmetrics16$MeanMedian)))
+
+
+#do the vote index here, 2012-20
+for(i in 1:1) {
+  stats = plans[[i]] %>%
+      mutate(pop_dev = abs(total_pop / get_target(pa_map) - 1),
+             voteindex = group_frac(pa_map, sum_dvotes, sum_dvotes + sum_rvotes)
+             )
+  
+  summary = stats %>%
+    group_by(draw) %>%
+    summarise(
+      max_dev = max(pop_dev),
+      index_wins = sum(voteindex>0.5)
+         )
+  
+  pa_stats = append(pa_stats, list(stats))
+  pa_summaries = append(pa_summaries, list(summary))
+}
+avsum = mean(summary$index_wins)
+sdsum = sd(summary$index_wins)
+cat('avg index wins = ', avsum , '+/- ', sdsum)
+
+#now do 2016 - 2020 elections only, voteindex
+for(i in 1:1) {
+  stats = plans[[i]] %>%
+      mutate(pop_dev = abs(total_pop / get_target(pa_map) - 1),
+             voteindex16 = group_frac(pa_map, sum_d16votes, sum_d16votes + sum_r16votes)
+             )
+  
+  summary = stats %>%
+    group_by(draw) %>%
+    summarise(
+      max_dev = max(pop_dev),
+      index_wins16 = sum(voteindex16>0.5)
+         )
+  
+  pa_stats = append(pa_stats, list(stats))
+  pa_summaries = append(pa_summaries, list(summary))
+}
+avsum16 = mean(summary$index_wins16)
+sdsum16 = sd(summary$index_wins16)
+cat('avg index wins = ', avsum16 , '+/- ', sdsum16)
+
+
